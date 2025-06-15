@@ -1,0 +1,32 @@
+# dvc.yaml structure
+stages:
+  preprocess:
+    cmd: python src/data_processing.py
+    deps:
+      - data/raw/insurance_data.csv
+    outs:
+      - data/processed/cleaned.csv
+    params:
+      - params.yaml:preprocess
+
+  eda:
+    cmd: jupyter nbconvert --execute notebooks/01-eda-task1.ipynb
+    deps:
+      - data/processed/cleaned.csv
+    outs:
+      - reports/figures/eda/
+
+  hypothesis:
+    cmd: python src/hypothesis_testing.py
+    deps:
+      - data/processed/cleaned.csv
+    outs:
+      - reports/hypothesis_results.csv
+
+  modeling:
+    cmd: python src/modeling.py
+    deps:
+      - data/processed/cleaned.csv
+    outs:
+      - models/
+      - reports/model_metrics.json

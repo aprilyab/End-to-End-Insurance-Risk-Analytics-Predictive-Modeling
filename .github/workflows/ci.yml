@@ -1,0 +1,130 @@
+name: Insurance Analytics CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * *'  # Daily build at midnight UTC
+
+jobs:
+  setup-and-linting:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for DVC
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install dvc dvc-gdrive black flake8 nbconvert papermill
+
+      - name: Configure DVC
+        run: |
+          dvc init --no-scm
+          dvc remote add -d localstorage /tmp/dvc-storage
+          dvc remote add gdrive ${{ secrets.DVC_GDRIVE_URL }}
+
+      - name: Pull data with DVC
+        run: dvc pull
+
+      - name: Run Black formatting check
+        run: black --check .
+
+      - name: Run Flake8 linting
+        run: flake8 .
+
+  eda-notebooks:
+    runs-on: ubuntu-latest
+    needs: setup-and-linting
+    strategy:
+      matrix:
+        notebook: ['eda-task1', 'eda-task2', 'hypothesis-task3', 'modeling-task4']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install notebook dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install jupyter pandas matplotlib seaborn statsmodels scikit-learn
+
+      - name: Execute notebook ${{ matrix.notebook }}
+        run: |
+          papermill notebooks/${{ matrix.notebook }}.ipynb \
+                  reports/${{ matrix.notebook }}-output.ipynb \
+                  -k python3
+
+      - name: Convert to HTML
+        run: |
+          jupyter nbconvert --to html reports/${{ matrix.notebook }}-output.ipynb
+          mv reports/${{ matrix.notebook }}-output.html reports/
+
+      - name: Upload notebook report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.notebook }}-report
+          path: reports/${{ matrix.notebook }}-output.html
+
+  run-tests:
+    runs-on: ubuntu-latest
+    needs: eda-notebooks
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install test dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run hypothesis tests
+        run: |
+          python src/hypothesis_tests.py
+
+      - name: Run model tests
+        run: |
+          python src/test_models.py
+
+  deploy-docs:
+    runs-on: ubuntu-latest
+    needs: run-tests
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build documentation
+        run: |
+          pip install mkdocs mkdocs-material
+          mkdocs build --site-dir public
+
+      - name: Include notebook reports
+        run: |
+          mkdir -p public/notebooks
+          cp reports/*.html public/notebooks/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public

@@ -30,9 +30,26 @@ jobs:
 
       - name: Configure DVC
         run: |
-          dvc init --no-scm
-          dvc remote add -d localstorage /tmp/dvc-storage
-          dvc remote add gdrive ${{ secrets.DVC_GDRIVE_URL }}
+          # Initialize DVC if not already initialized
+          if [ ! -d ".dvc" ]; then
+            dvc init --no-scm
+          else
+            dvc init -f --no-scm
+          fi
+
+          # Add local remote if not exists, else update
+          if ! dvc remote list | grep -q "^localstorage"; then
+            dvc remote add -d localstorage /tmp/dvc-storage
+          else
+            dvc remote modify localstorage url /tmp/dvc-storage
+          fi
+
+          # Add gdrive remote (replace URL as per your secret)
+          if ! dvc remote list | grep -q "^gdrive"; then
+            dvc remote add gdrive ${{ secrets.DVC_GDRIVE_URL }}
+          else
+            dvc remote modify gdrive url ${{ secrets.DVC_GDRIVE_URL }}
+          fi
 
       - name: Pull data with DVC
         run: dvc pull
@@ -65,9 +82,7 @@ jobs:
 
       - name: Execute notebook ${{ matrix.notebook }}
         run: |
-          papermill notebooks/${{ matrix.notebook }}.ipynb \
-                  reports/${{ matrix.notebook }}-output.ipynb \
-                  -k python3
+          papermill notebooks/${{ matrix.notebook }}.ipynb reports/${{ matrix.notebook }}-output.ipynb -k python3
 
       - name: Convert to HTML
         run: |
@@ -98,12 +113,10 @@ jobs:
           pip install pytest
 
       - name: Run hypothesis tests
-        run: |
-          python src/hypothesis_tests.py
+        run: python src/hypothesis_tests.py
 
       - name: Run model tests
-        run: |
-          python src/test_models.py
+        run: python src/test_models.py
 
   deploy-docs:
     runs-on: ubuntu-latest
